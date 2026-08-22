@@ -3,6 +3,7 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#include <string>
 
 struct Vector3
 {
@@ -22,6 +23,7 @@ struct Sphere
     Vector3 center;
     double radius;
     Vector3 color;
+    bool emissive;
 };
 
 struct Plane
@@ -145,10 +147,20 @@ bool isShadowed(
     double lightDistance,
     const std::vector<Sphere>& spheres)
 {
-    SphereHit hit = findClosestSphere(shadowRay, spheres);
-    return
-        hit.t > 0.0 &&
-        hit.t < lightDistance;
+   for (const Sphere& sphere : spheres)
+   {
+        if (sphere.emissive)
+        {
+            continue;
+        }
+        double t = hitSphere(shadowRay, sphere);
+
+        if (t > 0.0 && t < lightDistance)
+        {
+            return true;
+        }
+   }
+   return false;
 }
 
 double hitPlane (const Ray& ray, const Plane& plane)
@@ -200,11 +212,13 @@ Vector3 traceRay(
     const Ray& ray,
     const std::vector<Sphere>& spheres,
     const Plane& plane,
+    bool planeEnabled,
     const Vector3& lightPosition,
     const Vector3& backgroundColor)
 {
     SphereHit sphereHit = findClosestSphere(ray, spheres);
-    double planeT = hitPlane(ray, plane);
+    double planeT = 
+        planeEnabled ? hitPlane(ray, plane) : -1.0;
 
     bool sphereIsClosest =
         sphereHit.t > 0.0 &&
@@ -214,6 +228,11 @@ Vector3 traceRay(
     {
         const Sphere& hitObject =
             spheres[sphereHit.sphereIndex];
+        
+        if (hitObject.emissive)
+        {
+            return hitObject.color;
+        }
 
         Vector3 hitPoint = pointAt(ray, sphereHit.t);
         Vector3 outward = subtract(hitPoint, hitObject.center);
@@ -310,8 +329,8 @@ int main()
     };
 
     std::vector<Sphere> spheres {
-        Sphere{{0, 0, -3}, 1, {255, 0, 0}},
-        Sphere{{1.3, -0.5, -2.4}, 0.5, {40, 80, 255}}
+        Sphere{{0, 0, -3}, 1, {255, 190, 40}, true},
+        Sphere{{1.3, -0.5, -3.0}, 0.5, {40, 80, 255}, false}
     };
 
     Plane plane {
@@ -320,70 +339,84 @@ int main()
         {160, 160, 160}
     };
 
-    Vector3 lightPosition = {-2.0, 2.0, 0.0};
+    Vector3 lightPosition = spheres[0].center;
 
-    std::ofstream outputFile("output.ppm");
+    int frameCount = 120;
+    double orbitRadius = 1.8;
+    double twoPi = 2.0 * std::acos(-1.0);
 
-    if(!outputFile.is_open())
+    for (int frame = 0; frame < frameCount; frame++)
     {
-        std::cerr << "Error opening file" << std::endl;
-        return 1;
-    }
+        double theta = twoPi * (static_cast<double>(frame) / frameCount);
 
-   outputFile << "P3" << "\n";
-   outputFile << windowWidth << " " << windowHeight << "\n";
-   outputFile << maxChannelValue << "\n";
+        spheres[1].center.x = spheres[0].center.x + orbitRadius * std::cos(theta);
+        spheres[1].center.y = spheres[0].center.y + orbitRadius * std::sin(theta);
 
-   for (int row = 0; row < windowHeight; row++)
-   {
-        for (int col = 0; col < windowWidth; col++)
+        std::string filename = 
+            "frame_" + std::to_string(frame) + ".ppm";
+
+        std::ofstream outputFile(filename);
+
+        if(!outputFile.is_open())
         {
-            Vector3 accumulatedColor {0.0, 0.0, 0.0};
+            std::cerr << "Error opening file" << std::endl;
+            return 1;
+        }
+        outputFile << "P3" << "\n";
+        outputFile << windowWidth << " " << windowHeight << "\n";
+        outputFile << maxChannelValue << "\n";
 
-            for (int sampleY = 0; sampleY < samplesPerAxis; sampleY++)
+        for (int row = 0; row < windowHeight; row++)
+        {
+            for (int col = 0; col < windowWidth; col++)
             {
-                for (int sampleX = 0; sampleX < samplesPerAxis; sampleX++)
+                Vector3 accumulatedColor {0.0, 0.0, 0.0};
+
+                for (int sampleY = 0; sampleY < samplesPerAxis; sampleY++)
                 {
-                    double offsetX =
-                        (static_cast<double>(sampleX) + 0.5) / samplesPerAxis;
-                    double offsetY =
-                        (static_cast<double>(sampleY) + 0.5) / samplesPerAxis;
+                    for (int sampleX = 0; sampleX < samplesPerAxis; sampleX++)
+                    {
+                        double offsetX =
+                            (static_cast<double>(sampleX) + 0.5) / samplesPerAxis;
+                        double offsetY =
+                            (static_cast<double>(sampleY) + 0.5) / samplesPerAxis;
 
-                    double u = (col + offsetX) / windowWidth;
-                    double v = (row + offsetY) / windowHeight;
+                        double u = (col + offsetX) / windowWidth;
+                        double v = (row + offsetY) / windowHeight;
 
-                    Ray cameraRay = makeCameraRay(camera, u, v);
+                        Ray cameraRay = makeCameraRay(camera, u, v);
 
-                    Vector3 horizonColor {220.0, 235.0, 255.0};
-                    Vector3 topColor {70.0, 130.0, 230.0};
+                        Vector3 horizonColor {4.0, 6.0, 18.0};
+                        Vector3 topColor {0.0, 0.0, 4.0};
 
-                    double skyT = 1.0 - v;
-                    Vector3 horizonContribution = multiply(horizonColor, 1 - skyT);
-                    Vector3 topContribution = multiply(topColor, skyT);
-                    Vector3 backgroundColor =
-                        add(horizonContribution, topContribution);
-                      
-                    Vector3 pixelColor = traceRay(
-                        cameraRay,
-                        spheres,
-                        plane,
-                        lightPosition,
-                        backgroundColor);
+                        double skyT = 1.0 - v;
+                        Vector3 horizonContribution = multiply(horizonColor, 1 - skyT);
+                        Vector3 topContribution = multiply(topColor, skyT);
+                        Vector3 backgroundColor =
+                            add(horizonContribution, topContribution);
+                        
+                        Vector3 pixelColor = traceRay(
+                            cameraRay,
+                            spheres,
+                            plane,
+                            false,
+                            lightPosition,
+                            backgroundColor);
 
-                    accumulatedColor = add(accumulatedColor, pixelColor);
+                        accumulatedColor = add(accumulatedColor, pixelColor);
+                    }
                 }
-            }
-            double totalSamples = samplesPerAxis * samplesPerAxis;
-            Vector3 averageColor = multiply(accumulatedColor, 1.0 / totalSamples);
+                double totalSamples = samplesPerAxis * samplesPerAxis;
+                Vector3 averageColor = multiply(accumulatedColor, 1.0 / totalSamples);
 
-            outputFile <<
-                static_cast<int> (averageColor.x) << " " <<
-                static_cast<int> (averageColor.y) << " " <<
-                static_cast<int> (averageColor.z) << "\n";
-        }   
-   }
-
-    outputFile.close();
+                outputFile <<
+                    static_cast<int> (averageColor.x) << " " <<
+                    static_cast<int> (averageColor.y) << " " <<
+                    static_cast<int> (averageColor.z) << "\n";
+            }   
+        }
+        outputFile.close();
+    }
 
     return 0;
 }
